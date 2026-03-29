@@ -235,8 +235,3 @@ Neden Global Temp Table (GTT) Kullandım ?
 - CREATE GLOBAL TEMPORARY TABLE temp_table_name → Geçici tablo oluşturuyoruz, adı "temp_table_name".
 - ON COMMIT PRESERVE ROWS → Transaction commit edildiğinde satırlar silinmez, oturum boyunca kalır.
 */
-
--- (python) encode edilecekler -> Musteri_Durum, Hesap_Durum, Kredi_Durum, Risk_Durum ,Cinsiyet label
--- (python) HesapTuru, AlarmTipi,yas_kategori encode et one hot
--- (python) kardinal veri droplanacak sütunlar algoritmaya girerken -> MusteriId
--- sonra missing value ları doldur
