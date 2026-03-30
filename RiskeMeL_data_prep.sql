@@ -35,11 +35,12 @@ SELECT * FROM CR_Risk;
 TEMP TABLE oluşturma adımları
 
 -- 1.CR_CRM, CR_Account, CR_Credit, CR_Risk tablolarını birleştirdik
-     --Sadece hesabı olan müşterileri eşleştirdik, hesabı olmayan olanları dahil etmedik bu yüzden INNER JOIN ile birleştirdim CR_Accouunt ı, 
+     --Sadece hesabı olan müşterileri eşleştirdik, hesabı olmayan olanları dahil etmedik bu yüzden INNER JOIN ile birleştirdim CR_Account ı, 
      --Ama diğer tablolar kredisi olmayan ya da riskli olmayan müşterileri de dahil edip null değer olmasını sağladım
+     --CR_Account tablosundaki Hesap Durum larının sadece 'AÇIK' olanları dahil ettim, bu yüzden o tablonun Durum sütununu dropladım
 -- 2.Sütunlarda düzenleme gerçekleştirdim (duplicate sütunları çıkardım, aynı isimli sütunların isimlerini değiştirdim)
-   -- CR_CRM -> Soyad,TCNO,SubeId,KayitTarihi çıkardım, Durum -> Musteri_Durum olarak isimlendirdim
-   -- CR_Account -> HesapNo,MusteriId,OlusturmaTarihi çıkardım, FaizOrani -> Hesap_Faiz_Orani, Durum -> Hesap_Durum olarak isimlendirdim
+   -- CR_CRM -> Soyad,TCNO,SubeId,KayitTarihi çıkardım, Durum u da çıkardım çünkü Hesabı olan müşterileri aldım ve hepsinin Durum u 'AKTIF' ti
+   -- CR_Account -> HesapNo,MusteriId,OlusturmaTarihi,Durum çıkardım, FaizOrani -> Hesap_Faiz_Orani olarak isimlendirdim
    -- CR_Credit -> KrediId,MusteriId çıkardım, FaizOrani -> Kredi_Faiz_Orani, Durum -> Kredi_Durum olarak isimlendirdim
    -- CR_Risk -> AlarmId,MusteriId,AlarmTarihi,Aciklama çıkardım,  Durum -> Risk_Durum olarak isimlendirdim
 -- 3.Elimdeki değişkenlerden yeni sütun ürettim, feature türetme, sonra işime yaramayacak olanları dropladım
@@ -83,7 +84,6 @@ CREATE GLOBAL TEMPORARY TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP
     Cinsiyet           VARCHAR2(20),
     Yas                NUMBER,
     RiskSkoru          NUMBER,
-    Musteri_Durum      VARCHAR2(20),
     SubeId             NUMBER,
     Sube_Ici_Risk_Sira NUMBER,
     Sube_Risk_Yuzde    NUMBER,
@@ -91,7 +91,6 @@ CREATE GLOBAL TEMPORARY TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP
     Bakiye             NUMBER,
     Limit              NUMBER,
     Hesap_Faiz_Orani   NUMBER,
-    Hesap_Durum        VARCHAR2(20),
     Anapara            VARCHAR2(50),
     KalanBorc          VARCHAR2(50),
     Borc_Yuku_Yuzde    NUMBER,
@@ -117,15 +116,13 @@ SELECT c.MusteriId,
        END AS Cinsiyet,
        TRUNC(MONTHS_BETWEEN(SYSDATE, c.DogumTarihi) / 12) AS Yas, 
        c.RiskSkoru,
-       c.Durum as Musteri_Durum,
        a.SubeId,
        RANK() OVER (PARTITION BY a.SubeId ORDER BY c.RiskSkoru DESC) AS Sube_Ici_Risk_Sira,
        ROUND(PERCENT_RANK() OVER (ORDER BY s.RiskSkoru_AVG DESC),2) AS Sube_Risk_Yuzde,
        a.HesapTuru,
        a.Bakiye,
        a.Limit,
-       a.FaizOrani as Hesap_Faiz_Orani,
-       a.Durum as Hesap_Durum,       
+       a.FaizOrani as Hesap_Faiz_Orani,     
        COALESCE(TO_CHAR(cr.Anapara), 'NaN') AS Anapara,
        COALESCE(TO_CHAR(cr.KalanBorc), 'NaN') AS KalanBorc,
        ROUND(CUME_DIST() OVER (ORDER BY (cr.KalanBorc / NULLIF(cr.Anapara,0)) DESC),2) AS Borc_Yuku_Yuzde,
@@ -148,7 +145,8 @@ JOIN LATERAL (
     JOIN CR_Account a2 ON c2.MusteriId = a2.MusteriId
     WHERE a2.SubeId = a.SubeId
     GROUP BY a2.SubeId
-) s ON 1=1;
+) s ON 1=1
+WHERE a.Durum = 'AÇIK';
 
 SELECT * FROM CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP;
 
@@ -161,13 +159,11 @@ CREATE TABLE CREDIT_RISK_ANALYTIC_DATA_PREP (
     Yas                NUMBER,
     Yas_Kategori       VARCHAR2(20),
     RiskSkoru          NUMBER,
-    Musteri_Durum      VARCHAR2(20),
     Sube_Risk_Skoru    NUMBER,
     HesapTuru          VARCHAR2(20),
     Bakiye             NUMBER,
     Limit              NUMBER,
     Hesap_Faiz_Orani   NUMBER,
-    Hesap_Durum        VARCHAR2(20),
     Anapara            VARCHAR2(50),
     KalanBorc          VARCHAR2(50),
     Kredi_Faiz_Orani   VARCHAR2(50),
@@ -190,13 +186,11 @@ SELECT t.MusteriId,
            WHEN t.Yas >= 50 THEN 'Yaşlı'
        END AS Yas_Kategori,
        t.RiskSkoru,
-       t.Musteri_Durum,
        ROUND(t.Sube_Risk_Yuzde*(1/t.Sube_Ici_Risk_Sira),2) AS Sube_Risk_Skoru,
        t.HesapTuru,
        t.Bakiye,
        t.Limit,
        t.Hesap_Faiz_Orani,
-       t.Hesap_Durum,
        CASE 
            WHEN t.Anapara = 'NaN' THEN NULL 
            ELSE t.Anapara 
