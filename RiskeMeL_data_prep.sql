@@ -69,11 +69,13 @@ GERÇEK DATA PREP TABLOSUNU oluşturma adımları
      -- 18-29 yaş aralığını 'GENÇ', 
      -- 30-49 yaş aralığını 'ORTA YAŞLI', 
      -- 50 ve üstünü 'YAŞLI' olarak etiketledim ve Yas_Kategori olarak isimlendirdim
--- 2.Hesasplamış olduğum Sube_Risk_Yuzde yi 1/Sube_İci_Risk_Sira ile çarparak bir Sube_Risk_Skoru hesapladım
+-- 2.Hesaplamış olduğum Sube_Risk_Yuzde yi 1/Sube_İci_Risk_Sira ile çarparak bir Sube_Risk_Skoru hesapladım
 -- 3.Hem borç yükünü hem faiz oranını normalize ederek kredi maliyet yoğunluğunu ölçmek için, 
      --Borc_Yuku_Yuzde ve Kredi_Faiz_Orani nı çarptım
--- 4.Anapara,KalanBorc, Kredi_Faiz_Orani değişkenlerini 'NaN' değerleri, Kredi_Durum 'None' değerleri NULL yaptım
--- 5.SubeId, Sube_Ici_Risk_Sira, Sube_Risk_Yuzde değişkenlerini dropladım
+-- 4.Vade Oranı hesaplayarak, geçmiş sürenin toplam zamana oranını hesapladım
+     -- (Ilk_Odeme_GecenGun) / (Ilk_Odeme_GecenGun + Son_Odeme_KalanGun)
+-- 5.Anapara,KalanBorc, Kredi_Faiz_Orani değişkenlerini 'NaN' değerleri, Kredi_Durum 'None' değerleri NULL yaptım
+-- 6.SubeId, Sube_Ici_Risk_Sira, Sube_Risk_Yuzde değişkenlerini dropladım
 
 */
 
@@ -174,6 +176,7 @@ CREATE TABLE CREDIT_RISK_ANALYTIC_DATA_PREP (
     Kredi_Durum        VARCHAR2(20),
     Borc_Yuku_Yuzde    NUMBER,
     Ilk_Odeme_GecenGun NUMBER,
+    Vade_Orani         NUMBER,
     AlarmTipi          VARCHAR2(20),
     Risk_Durum         VARCHAR2(20)
 );
@@ -210,6 +213,7 @@ SELECT t.MusteriId,
        END AS Kredi_Durum,
        (t.Borc_Yuku_Yuzde * t.Kredi_Faiz_Orani)  AS Borc_Yuku_Yuzde,
        t.Ilk_Odeme_GecenGun,
+       ROUND((t.Ilk_Odeme_GecenGun) / NULLIF((t.Ilk_Odeme_GecenGun + t.Son_Odeme_KalanGun),0),2) AS Vade_Orani,
        t.AlarmTipi,
        t.Risk_Durum
 FROM CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP t;
@@ -219,6 +223,7 @@ SELECT * FROM CREDIT_RISK_ANALYTIC_DATA_PREP;
 -- DROP TABLE CREDIT_RISK_ANALYTIC_DATA_PREP;
 
 -- DELETE CREDIT_RISK_ANALYTIC_DATA_PREP;
+
 /*
 Neden Global Temp Table (GTT) Kullandım ?
 - Ara sonuçları bir kez hesaplayıp tabloya yazıyoruz, böylelikle her çalıştırmada tüm tabloyu yeniden hesaplamıyor, büyük veri için ideal
