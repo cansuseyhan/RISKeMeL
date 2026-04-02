@@ -50,7 +50,7 @@ TEMP TABLE oluşturma adımları
                    BasvuruTarihi nden bugüne kadar geçen süreyi gün olarak hesaplatıp Ilk_Odeme_GecenGun turettim, sonra BasvuruTarihi ni dropladım 
 -- 4.Veri setindeki NaN, None yazan formata aykırı değerleri null formatına çekmeyi göstermek istedim 
       Bunun için öncelikle temp table da CR_Credit tablosundan çektiğim, 
-            -- Anapara,KalanBorc,FaizOrani 'NaN' stringi atadım COALESCE ile null olanlara, FaizOrani -> Kredi_Faiz_Orani olarak isimlendirdim
+            -- Anapara,KalanBorc 'NaN' stringi atadım COALESCE ile null olanlara, FaizOrani -> Kredi_Faiz_Orani olarak isimlendirdim
             -- Durum u 'None' stringi atadım COALESCE ile null olanlara, Durum -> Kredi_Durum olarak isimlendirdim
 -- 5.Hesaplama adımı 
      Her müşteri için bir şube skoru oluşturmak istedim,bunun için öncelikle temp table da şunları oluşturdum
@@ -70,16 +70,17 @@ GERÇEK DATA PREP TABLOSUNU oluşturma adımları
      -- 30-49 yaş aralığını 'ORTA YAŞLI', 
      -- 50 ve üstünü 'YAŞLI' olarak etiketledim ve Yas_Kategori olarak isimlendirdim
 -- 2.Hesasplamış olduğum Sube_Risk_Yuzde yi 1/Sube_İci_Risk_Sira ile çarparak bir Sube_Risk_Skoru hesapladım
--- 3.Anapara,KalanBorc, Kredi_Faiz_Orani değişkenlerini 'NaN' değerleri, Kredi_Durum 'None' değerleri NULL yaptım
--- 4.SubeId, Sube_Ici_Risk_Sira, Sube_Risk_Yuzde değişkenlerini dropladım
+-- 3.Hem borç yükünü hem faiz oranını normalize ederek kredi maliyet yoğunluğunu ölçmek için, 
+     --Borc_Yuku_Yuzde ve Kredi_Faiz_Orani nı çarptım
+-- 4.Anapara,KalanBorc, Kredi_Faiz_Orani değişkenlerini 'NaN' değerleri, Kredi_Durum 'None' değerleri NULL yaptım
+-- 5.SubeId, Sube_Ici_Risk_Sira, Sube_Risk_Yuzde değişkenlerini dropladım
 
 */
 
 /* 2.Temp table oluşturuyoruz data prep için */
 
 -- Önce tabloyu veri tiplerine göre create ediyorum
-CREATE GLOBAL TEMPORARY TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP
-(
+CREATE GLOBAL TEMPORARY TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP (
     MusteriId          NUMBER,
     Cinsiyet           VARCHAR2(20),
     Yas                NUMBER,
@@ -94,7 +95,7 @@ CREATE GLOBAL TEMPORARY TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP
     Anapara            VARCHAR2(50),
     KalanBorc          VARCHAR2(50),
     Borc_Yuku_Yuzde    NUMBER,
-    Kredi_Faiz_Orani   VARCHAR2(50),
+    Kredi_Faiz_Orani   NUMBER,
     Son_Odeme_KalanGun NUMBER,
     Kredi_Durum        VARCHAR2(20),
     Ilk_Odeme_GecenGun NUMBER,
@@ -122,11 +123,11 @@ SELECT c.MusteriId,
        a.HesapTuru,
        a.Bakiye,
        a.Limit,
-       a.FaizOrani as Hesap_Faiz_Orani,     
+       a.FaizOrani as Hesap_Faiz_Orani,    
        COALESCE(TO_CHAR(cr.Anapara), 'NaN') AS Anapara,
        COALESCE(TO_CHAR(cr.KalanBorc), 'NaN') AS KalanBorc,
        ROUND(CUME_DIST() OVER (ORDER BY (cr.KalanBorc / NULLIF(cr.Anapara,0)) DESC),2) AS Borc_Yuku_Yuzde,
-       COALESCE(TO_CHAR(cr.FaizOrani), 'NaN') AS Kredi_Faiz_Orani,
+       cr.FaizOrani AS Kredi_Faiz_Orani,
        TRUNC(TO_DATE(cr.VadeTarihi, 'DD/MM/YYYY') - SYSDATE ) AS Son_Odeme_KalanGun,
        COALESCE(cr.Durum, 'None') AS Kredi_Durum,
        TRUNC(SYSDATE - TO_DATE(cr.BasvuruTarihi, 'DD/MM/YYYY')) AS Ilk_Odeme_GecenGun,   
@@ -148,6 +149,8 @@ JOIN LATERAL (
 ) s ON 1=1
 WHERE a.Durum = 'AÇIK';
 
+--TRUNCATE TABLE CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP;
+
 SELECT * FROM CREDIT_RISK_ANALYTIC_DATA_PREP_TEMP;
 
 /* 3.Python a gidecek esas data prep tablosunu oluşturuyorum */
@@ -164,9 +167,9 @@ CREATE TABLE CREDIT_RISK_ANALYTIC_DATA_PREP (
     Bakiye             NUMBER,
     Limit              NUMBER,
     Hesap_Faiz_Orani   NUMBER,
-    Anapara            VARCHAR2(50),
-    KalanBorc          VARCHAR2(50),
-    Kredi_Faiz_Orani   VARCHAR2(50),
+    Anapara            NUMBER,
+    KalanBorc          NUMBER,
+    Kredi_Faiz_Orani   NUMBER,
     Son_Odeme_KalanGun NUMBER,
     Kredi_Durum        VARCHAR2(20),
     Borc_Yuku_Yuzde    NUMBER,
@@ -176,7 +179,7 @@ CREATE TABLE CREDIT_RISK_ANALYTIC_DATA_PREP (
 );
 
 -- Sonra içini verileri işleyerek insert ediyorum
-INSERT INTO CREDIT_RISK_ANALYTIC_DATA_PREP 
+INSERT INTO CREDIT_RISK_ANALYTIC_DATA_PREP
 SELECT t.MusteriId,
        t.Cinsiyet,
        t.Yas,
@@ -199,16 +202,13 @@ SELECT t.MusteriId,
            WHEN t.KalanBorc = 'NaN' THEN NULL 
            ELSE t.KalanBorc 
        END AS KalanBorc,
-       CASE 
-           WHEN t.Kredi_Faiz_Orani = 'NaN' THEN NULL 
-           ELSE t.Kredi_Faiz_Orani 
-       END AS Kredi_Faiz_Orani,       
+       t.Kredi_Faiz_Orani,       
        t.Son_Odeme_KalanGun,
        CASE 
            WHEN t.Kredi_Durum = 'None' THEN NULL 
            ELSE t.Kredi_Durum 
        END AS Kredi_Durum,
-       t.Borc_Yuku_Yuzde,
+       (t.Borc_Yuku_Yuzde * t.Kredi_Faiz_Orani)  AS Borc_Yuku_Yuzde,
        t.Ilk_Odeme_GecenGun,
        t.AlarmTipi,
        t.Risk_Durum
@@ -218,7 +218,7 @@ SELECT * FROM CREDIT_RISK_ANALYTIC_DATA_PREP;
 
 -- DROP TABLE CREDIT_RISK_ANALYTIC_DATA_PREP;
 
-
+-- DELETE CREDIT_RISK_ANALYTIC_DATA_PREP;
 /*
 Neden Global Temp Table (GTT) Kullandım ?
 - Ara sonuçları bir kez hesaplayıp tabloya yazıyoruz, böylelikle her çalıştırmada tüm tabloyu yeniden hesaplamıyor, büyük veri için ideal
